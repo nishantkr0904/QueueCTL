@@ -2,62 +2,90 @@
 
 ---
 
-## Phase 1 — Project Setup & Core Data Model
+## Phase 1 — Project Setup
 
-**Objective:** Establish the project foundation, define the job data model, and set up persistent storage.
+**Objective:** Establish the project foundation — scaffolding, directory structure, documentation, and development tooling.
 
 **Features Completed:**
-- Project scaffolding and CLI entry point
-- Job data model (id, command, state, attempts, max_retries, timestamps)
-- Persistent storage layer (jobs survive restarts)
-- Basic CLI skeleton wired up
+- Project scaffolding and directory structure
+- Documentation (INSTRUCTIONS, ROADMAP, PROJECT_STRUCTURE, ARCHITECTURE, DEVELOPMENT_NOTES)
+- `.gitignore`, `requirements.txt`, `pyproject.toml`
+- Empty `queuectl/` package with `__init__.py`
 
-**Expected Outcome:** A runnable CLI binary that can initialize and read/write job data to persistent storage.
+**Expected Outcome:** A clean project skeleton ready for incremental development.
 
 ---
 
-## Phase 2 — Job Enqueue & Listing
+## Phase 2 — Database Setup
 
-**Objective:** Allow users to submit jobs and inspect the queue.
+**Objective:** Set up the SQLite database layer — connection management and table creation.
+
+**Features Completed:**
+- SQLite connection with foreign key support enabled
+- Helper functions to open and close a connection
+- Table creation (jobs, config, workers) using `CREATE TABLE IF NOT EXISTS`
+
+**Expected Outcome:** The database can be initialized and is ready for other modules to read and write data.
+
+---
+
+## Phase 3 — Job Model and Storage
+
+**Objective:** Define the job data model and build the persistence layer for reading and writing jobs.
+
+**Features Completed:**
+- Job data model (id, command, state, attempts, max_retries, timestamps)
+- Storage functions to insert, query, and update jobs in the database
+- Atomic job claiming mechanism to prevent duplicate execution
+
+**Expected Outcome:** Jobs can be created, queried by state, and updated. The claiming mechanism is atomic across processes.
+
+---
+
+## Phase 4 — CLI Foundation
+
+**Objective:** Build the CLI entry point and basic command routing.
+
+**Features Completed:**
+- CLI entry point (`main.py`) with argument parsing
+- Command routing to appropriate handlers
+- `queuectl status` — summary of all job states and active workers
+- `queuectl list --state <state> --json` — list jobs filtered by state, JSON output to stdout
+
+**Expected Outcome:** A runnable CLI binary that can dispatch commands. Status and list commands work against the database.
+
+---
+
+## Phase 5 — Enqueue Command
+
+**Objective:** Allow users to submit jobs through the CLI.
 
 **Features Completed:**
 - `queuectl enqueue '<json>'` — add a new job to the queue
-- `queuectl list --state <state> --json` — list jobs filtered by state, JSON output to stdout
-- `queuectl status` — summary of all job states and active workers
+- Input validation (required fields, JSON parsing)
 
 **Expected Outcome:** Users can enqueue jobs and verify them via list and status commands. JSON output matches the interface contract.
 
 ---
 
-## Phase 3 — Single Worker Execution
+## Phase 6 — Worker Execution
 
-**Objective:** Build a single worker that picks up pending jobs and executes them.
+**Objective:** Build workers that pick up pending jobs and execute them, with support for multiple workers in parallel.
 
 **Features Completed:**
 - `queuectl worker start` — starts a single worker in the foreground
+- `queuectl worker start --count N` — start N workers in the foreground
 - Worker polls for pending jobs, claims them atomically, and executes the shell command
 - Job state transitions: `pending → processing → completed` (on exit code 0) or `pending → processing → failed` (on non-zero exit code)
+- Workers from separate OS processes can run concurrently
+- Worker registration (tracking active workers)
 - Graceful shutdown on SIGTERM/SIGINT — finish the in-flight job, then exit
 
-**Expected Outcome:** A single worker can pick up and execute jobs end-to-end. Graceful shutdown works correctly.
+**Expected Outcome:** Multiple workers across separate terminals process jobs in parallel. Every job runs exactly once. Graceful shutdown works correctly.
 
 ---
 
-## Phase 4 — Multi-Worker Concurrency & Atomic Job Claiming
-
-**Objective:** Support multiple workers running in parallel across separate terminal sessions without duplicate execution.
-
-**Features Completed:**
-- `queuectl worker start --count N` — start N workers in the foreground
-- Workers from separate OS processes can run concurrently
-- Atomic job claiming — no two workers can execute the same job
-- Worker registration (tracking active workers)
-
-**Expected Outcome:** Multiple workers across separate terminals process jobs in parallel. Every job runs exactly once.
-
----
-
-## Phase 5 — Retry with Exponential Backoff & Dead Letter Queue
+## Phase 7 — Retry with Exponential Backoff & Dead Letter Queue
 
 **Objective:** Handle job failures with automatic retries and move permanently failed jobs to the DLQ.
 
@@ -72,7 +100,7 @@
 
 ---
 
-## Phase 6 — Crash Recovery
+## Phase 8 — Crash Recovery
 
 **Objective:** Ensure no job is permanently stuck in `processing` if a worker is killed (including SIGKILL).
 
@@ -85,7 +113,7 @@
 
 ---
 
-## Phase 7 — Worker Stop (Cross-Process Signaling)
+## Phase 9 — Worker Stop (Cross-Process Signaling)
 
 **Objective:** Allow graceful worker shutdown from a separate terminal.
 
@@ -97,7 +125,7 @@
 
 ---
 
-## Phase 8 — Configuration Management
+## Phase 10 — Configuration Management
 
 **Objective:** Make retry and backoff settings configurable and persistent.
 
@@ -110,7 +138,7 @@
 
 ---
 
-## Phase 9 — Documentation & Submission
+## Phase 11 — Documentation & Submission
 
 **Objective:** Produce all required documentation and prepare the final submission.
 
