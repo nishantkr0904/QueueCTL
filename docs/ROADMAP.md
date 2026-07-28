@@ -157,10 +157,12 @@
 **Objective:** Allow graceful worker shutdown from a separate terminal.
 
 **Features Completed:**
-- `queuectl worker stop` — signals all running workers to shut down from another terminal
-- Workers finish their in-flight job before exiting
+- `queuectl worker stop` — signals all running workers to gracefully shut down from another terminal
+- Workers are signaled using SIGTERM which leverages the existing graceful shutdown signal handler
+- Workers finish their current in-flight job, correctly update its final state, and cleanly deregister before exiting
+- The command outputs a simple summary of how many workers were signaled and how many already-exited ones were skipped
 
-**Expected Outcome:** Running workers can be gracefully stopped from any terminal session.
+**Expected Outcome:** Running workers can be gracefully stopped from any terminal session without jobs being forcefully interrupted.
 
 ---
 

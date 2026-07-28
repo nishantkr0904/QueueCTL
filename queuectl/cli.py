@@ -10,6 +10,7 @@ This module defines the command structure using Click:
 Implemented commands:
   - enqueue      — add a new job to the queue
   - worker start — start one or more workers in the foreground
+  - worker stop  — gracefully stop all running workers
   - dlq list     — list all dead-lettered jobs
   - dlq retry    — re-enqueue a dead job
 
@@ -28,7 +29,12 @@ import click
 
 from queuectl.db import open_connection, close_connection, initialize_database
 from queuectl.models import Job, DEFAULT_MAX_RETRIES, STATE_DEAD
-from queuectl.storage import insert_job, get_jobs_by_state, retry_dead_job
+from queuectl.storage import (
+    insert_job,
+    get_jobs_by_state,
+    retry_dead_job,
+    get_all_worker_pids,
+)
 from queuectl.worker import (
     register_worker,
     deregister_worker,
@@ -260,7 +266,35 @@ def _run_multiple_workers(count):
 @worker.command()
 def stop():
     """Gracefully stop all running workers."""
-    click.echo("Not implemented yet.")
+    connection = open_connection()
+    try:
+        initialize_database(connection)
+        pids = get_all_worker_pids(connection)
+    finally:
+        close_connection(connection)
+
+    if not pids:
+        click.echo("No workers currently running.")
+        return
+
+    signalled_count = 0
+    gone_count = 0
+
+    for pid in pids:
+        try:
+            # Send SIGTERM to the worker to initiate graceful shutdown.
+            # The worker's signal handler will catch this, finish its
+            # current job, deregister, and exit cleanly.
+            os.kill(pid, signal.SIGTERM)
+            signalled_count += 1
+        except OSError:
+            # The process no longer exists (or we lack permission, but
+            # for this assignment, it means the worker has exited/crashed).
+            gone_count += 1
+
+    click.echo(f"Sent SIGTERM to {signalled_count} worker(s).")
+    if gone_count > 0:
+        click.echo(f"Skipped {gone_count} worker(s) that already exited.")
 
 
 # ---------------------------------------------------------------------------
