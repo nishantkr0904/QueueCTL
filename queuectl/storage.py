@@ -432,6 +432,9 @@ def claim_job(connection, worker_id):
         # Import here to avoid circular imports (worker → storage → worker).
         # This is a simple constant lookup, not heavy logic.
         from queuectl.worker import DEFAULT_BACKOFF_BASE
+        
+        backoff_val = get_config(connection, "backoff-base")
+        backoff_base = int(backoff_val) if backoff_val is not None else DEFAULT_BACKOFF_BASE
 
         cursor = connection.execute(
             f"SELECT {_JOB_COLUMNS} FROM jobs "
@@ -442,7 +445,7 @@ def claim_job(connection, worker_id):
             "  ) "
             "ORDER BY created_at ASC "
             "LIMIT 1",
-            (DEFAULT_BACKOFF_BASE, now),
+            (backoff_base, now),
         )
         row = cursor.fetchone()
 
@@ -493,3 +496,28 @@ def claim_job(connection, worker_id):
         # If anything goes wrong, always release the write lock.
         connection.execute("ROLLBACK")
         raise
+
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+
+def get_config(connection, key):
+    """
+    Retrieve a configuration value by key.
+    Returns the string value if found, or None if the key does not exist.
+    """
+    cursor = connection.execute("SELECT value FROM config WHERE key = ?", (key,))
+    row = cursor.fetchone()
+    return row[0] if row else None
+
+def set_config(connection, key, value):
+    """
+    Insert or update a configuration value.
+    Replaces the value if the key already exists.
+    """
+    connection.execute(
+        "INSERT INTO config (key, value) VALUES (?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (key, str(value))
+    )
+    connection.commit()

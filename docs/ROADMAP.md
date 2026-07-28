@@ -171,11 +171,13 @@
 **Objective:** Make retry and backoff settings configurable and persistent.
 
 **Features Completed:**
-- `queuectl config set max-retries <N>` — set the maximum retry count
-- `queuectl config set backoff-base <N>` — set the backoff base
-- Configuration is persisted across restarts
+- Persistent configuration: Settings are stored reliably in the `config` SQLite table
+- `queuectl config set max-retries <N>` — set the default maximum retry count for future jobs
+- `queuectl config set backoff-base <N>` — set the exponential backoff base for retry delay calculations
+- Configuration persistence: Changes to config values survive process restarts and take effect globally
+- Configuration affecting only newly enqueued jobs: Existing jobs continue using the `max_retries` values they were enqueued with, ensuring deterministic behavior
 
-**Expected Outcome:** Users can tune retry and backoff behavior via CLI. Settings are durable.
+**Expected Outcome:** Users can tune retry and backoff behavior via the CLI. Settings are durable across restarts. Changing `max-retries` gracefully applies only to newly created jobs, avoiding unexpected behavior on running jobs.
 
 ---
 

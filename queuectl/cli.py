@@ -34,6 +34,8 @@ from queuectl.storage import (
     get_jobs_by_state,
     retry_dead_job,
     get_all_worker_pids,
+    get_config,
+    set_config,
 )
 from queuectl.worker import (
     register_worker,
@@ -91,27 +93,29 @@ def enqueue(job_json):
         click.echo("Error: Missing required field 'command'.", err=True)
         raise SystemExit(1)
 
-    # --- Step 3: Create a Job object ---
-    # We pass only 'id' and 'command' from user input.
-    # The Job constructor fills in state='pending', attempts=0,
-    # max_retries=3, and timestamps automatically.
-    # If the user provides 'max_retries' in their JSON, we honour it.
-    job = Job(
-        id=data["id"],
-        command=data["command"],
-        max_retries=data.get("max_retries", DEFAULT_MAX_RETRIES),
-    )
-
-    # --- Step 4: Store the job in the database ---
-    # Open a connection, ensure tables exist, insert, then close.
-    # The connection is always closed, even if the insert fails.
+    # --- Step 3: Determine configuration and create Job ---
+    # We open the database connection early to read configuration.
     connection = open_connection()
     try:
         initialize_database(connection)
+        
+        if "max_retries" in data:
+            max_retries = data["max_retries"]
+        else:
+            config_retries = get_config(connection, "max-retries")
+            max_retries = int(config_retries) if config_retries is not None else DEFAULT_MAX_RETRIES
+
+        job = Job(
+            id=data["id"],
+            command=data["command"],
+            max_retries=max_retries,
+        )
+
+        # --- Step 4: Store the job in the database ---
         insert_job(connection, job)
     except sqlite3.IntegrityError:
         # This happens when a job with the same ID already exists.
-        click.echo(f"Error: A job with id '{job.id}' already exists.", err=True)
+        click.echo(f"Error: A job with id '{data['id']}' already exists.", err=True)
         raise SystemExit(1)
     finally:
         close_connection(connection)
@@ -386,4 +390,30 @@ def config():
 @click.argument("value")
 def config_set(key, value):
     """Set a configuration value."""
-    click.echo("Not implemented yet.")
+    # Validation
+    if key not in ("max-retries", "backoff-base"):
+        click.echo(f"Error: Unsupported configuration key '{key}'. Supported keys are: max-retries, backoff-base.", err=True)
+        raise SystemExit(1)
+        
+    try:
+        val_int = int(value)
+        if val_int < 0:
+            raise ValueError()
+        
+        # backoff-base must be at least 1 (since 0^N = 0)
+        if key == "backoff-base" and val_int < 1:
+            raise ValueError()
+            
+    except ValueError:
+        click.echo(f"Error: Invalid value '{value}' for key '{key}'. Must be a valid positive integer.", err=True)
+        raise SystemExit(1)
+        
+    connection = open_connection()
+    try:
+        initialize_database(connection)
+        set_config(connection, key, val_int)
+    finally:
+        close_connection(connection)
+        
+    click.echo(f"Configuration '{key}' successfully set to {val_int}.")
+
