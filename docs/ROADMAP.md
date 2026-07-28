@@ -73,7 +73,24 @@
 
 ---
 
-## Phase 6 — Worker Implementation
+## Phase 6 — Job Claiming
+
+**Objective:** Atomically claim the oldest pending job so that no two workers — even across separate OS processes — can ever claim the same job.
+
+**Features Completed:**
+- `claim_job(connection, worker_id)` in storage.py
+- `BEGIN IMMEDIATE` transaction to acquire the SQLite write lock before reading
+- SELECT oldest pending job (`ORDER BY created_at ASC LIMIT 1`)
+- Guarded UPDATE with `AND state = 'pending'` to prevent stale-read races
+- `cursor.rowcount` verification — commit on success, rollback on race loss
+- Claimed job marked with `state='processing'`, `worker_id`, and `updated_at` (prepares for crash recovery in later phases)
+- No job execution — claiming only
+
+**Expected Outcome:** A single function can atomically claim one pending job. Concurrent callers from separate OS processes are safe — exactly one wins, the rest get None. No job is ever double-claimed.
+
+---
+
+## Phase 7 — Worker Execution
 
 **Objective:** Build workers that pick up pending jobs and execute them, with support for multiple workers in parallel.
 
@@ -90,7 +107,7 @@
 
 ---
 
-## Phase 7 — Retry with Exponential Backoff & Dead Letter Queue
+## Phase 8 — Retry with Exponential Backoff & Dead Letter Queue
 
 **Objective:** Handle job failures with automatic retries and move permanently failed jobs to the DLQ.
 
@@ -105,7 +122,7 @@
 
 ---
 
-## Phase 8 — Crash Recovery
+## Phase 9 — Crash Recovery
 
 **Objective:** Ensure no job is permanently stuck in `processing` if a worker is killed (including SIGKILL).
 
@@ -118,7 +135,7 @@
 
 ---
 
-## Phase 9 — Worker Stop (Cross-Process Signaling)
+## Phase 10 — Worker Stop (Cross-Process Signaling)
 
 **Objective:** Allow graceful worker shutdown from a separate terminal.
 
@@ -130,7 +147,7 @@
 
 ---
 
-## Phase 10 — Configuration Management
+## Phase 11 — Configuration Management
 
 **Objective:** Make retry and backoff settings configurable and persistent.
 
@@ -143,7 +160,7 @@
 
 ---
 
-## Phase 11 — Documentation & Submission
+## Phase 12 — Documentation & Submission
 
 **Objective:** Produce all required documentation and prepare the final submission.
 
