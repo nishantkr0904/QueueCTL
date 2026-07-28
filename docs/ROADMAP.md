@@ -62,9 +62,14 @@
 
 **Features Completed:**
 - `queuectl enqueue '<json>'` — add a new job to the queue
-- Input validation (required fields, JSON parsing)
+- JSON parsing with clear error message on malformed input
+- Validation of required fields (`id` and `command`)
+- Job creation using model defaults for state, attempts, max_retries, and timestamps
+- Optional `max_retries` override from user input
+- Duplicate job ID detection with user-friendly error
+- Job persisted to SQLite via the existing storage layer
 
-**Expected Outcome:** Users can enqueue jobs and verify them via list and status commands. JSON output matches the interface contract.
+**Expected Outcome:** Users can enqueue jobs into persistent storage through the CLI. Invalid input is rejected with clear error messages. Duplicate IDs are prevented.
 
 ---
 

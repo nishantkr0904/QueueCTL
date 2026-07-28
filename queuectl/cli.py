@@ -7,14 +7,21 @@ This module defines the command structure using Click:
   - Command groups with subcommands: worker (start, stop),
     dlq (list, retry), config (set).
 
-At this stage every command is a placeholder that prints
-"Not implemented yet." — the real logic will be added in later phases.
+The 'enqueue' command is fully implemented. All other commands are
+placeholders that print "Not implemented yet."
 
 The command structure matches the interface contract defined in
 INSTRUCTIONS.md (Section: CLI Commands).
 """
 
+import json
+import sqlite3
+
 import click
+
+from queuectl.db import open_connection, close_connection, initialize_database
+from queuectl.models import Job, DEFAULT_MAX_RETRIES
+from queuectl.storage import insert_job
 
 
 # ---------------------------------------------------------------------------
@@ -33,14 +40,64 @@ def cli():
 # ---------------------------------------------------------------------------
 # enqueue command
 # ---------------------------------------------------------------------------
-# Usage: queuectl enqueue '<json>'
-# Accepts a JSON string describing the job to add to the queue.
+# Usage: queuectl enqueue '{"id":"job1","command":"sleep 2"}'
+#
+# Accepts a JSON string with at least 'id' and 'command' fields.
+# All other job fields (state, attempts, max_retries, timestamps) are
+# filled in automatically by the Job model's defaults.
 
 @cli.command()
 @click.argument("job_json")
 def enqueue(job_json):
     """Add a new job to the queue."""
-    click.echo("Not implemented yet.")
+
+    # --- Step 1: Parse the JSON string ---
+    # If the user provides malformed JSON, we catch it here and
+    # print a helpful error instead of a Python traceback.
+    try:
+        data = json.loads(job_json)
+    except json.JSONDecodeError as e:
+        click.echo(f"Error: Invalid JSON — {e}", err=True)
+        raise SystemExit(1)
+
+    # --- Step 2: Validate required fields ---
+    # The assignment spec requires at least 'id' and 'command'.
+    # Everything else has sensible defaults in the Job model.
+    if "id" not in data or not data["id"]:
+        click.echo("Error: Missing required field 'id'.", err=True)
+        raise SystemExit(1)
+
+    if "command" not in data or not data["command"]:
+        click.echo("Error: Missing required field 'command'.", err=True)
+        raise SystemExit(1)
+
+    # --- Step 3: Create a Job object ---
+    # We pass only 'id' and 'command' from user input.
+    # The Job constructor fills in state='pending', attempts=0,
+    # max_retries=3, and timestamps automatically.
+    # If the user provides 'max_retries' in their JSON, we honour it.
+    job = Job(
+        id=data["id"],
+        command=data["command"],
+        max_retries=data.get("max_retries", DEFAULT_MAX_RETRIES),
+    )
+
+    # --- Step 4: Store the job in the database ---
+    # Open a connection, ensure tables exist, insert, then close.
+    # The connection is always closed, even if the insert fails.
+    connection = open_connection()
+    try:
+        initialize_database(connection)
+        insert_job(connection, job)
+    except sqlite3.IntegrityError:
+        # This happens when a job with the same ID already exists.
+        click.echo(f"Error: A job with id '{job.id}' already exists.", err=True)
+        raise SystemExit(1)
+    finally:
+        close_connection(connection)
+
+    # --- Step 5: Confirm success ---
+    click.echo(f"Job '{job.id}' enqueued successfully.")
 
 
 # ---------------------------------------------------------------------------
