@@ -35,10 +35,10 @@
 
 **Features Completed:**
 - Job data model (id, command, state, attempts, max_retries, timestamps)
-- Storage functions to insert, query, and update jobs in the database
-- Atomic job claiming mechanism to prevent duplicate execution
+- Storage functions to insert, query, update, and delete jobs in the database
+- Job serialization and deserialization
 
-**Expected Outcome:** Jobs can be created, queried by state, and updated. The claiming mechanism is atomic across processes.
+**Expected Outcome:** Jobs can be created, queried, updated, and deleted through the storage layer.
 
 ---
 
@@ -47,16 +47,16 @@
 **Objective:** Build the CLI entry point and basic command routing.
 
 **Features Completed:**
-- CLI entry point (`main.py`) with argument parsing
-- Command routing to appropriate handlers
-- `queuectl status` — summary of all job states and active workers
-- `queuectl list --state <state> --json` — list jobs filtered by state, JSON output to stdout
+- Root CLI entry point (`main.py`) that invokes the Click command group
+- Click command group and subgroup registration (`cli.py`)
+- Command routing for all required commands: `enqueue`, `status`, `list`, `worker`, `dlq`, `config`
+- Placeholder handlers for every command (no business logic)
 
-**Expected Outcome:** A runnable CLI binary that can dispatch commands. Status and list commands work against the database.
+**Expected Outcome:** A runnable CLI binary that recognises all commands and subcommands. Every command prints a placeholder message. No database access or business logic.
 
 ---
 
-## Phase 5 — Enqueue Command
+## Phase 5 — Enqueue Command Implementation
 
 **Objective:** Allow users to submit jobs through the CLI.
 
@@ -68,7 +68,7 @@
 
 ---
 
-## Phase 6 — Worker Execution
+## Phase 6 — Worker Implementation
 
 **Objective:** Build workers that pick up pending jobs and execute them, with support for multiple workers in parallel.
 
