@@ -15,7 +15,10 @@ Build a minimal, production-grade job queue that supports:
 
 ## Current Status
 
-🚧 **In Development** — Phase 1 (Project Setup & Core Data Model)
+🚧 **In Development** 
+- Project structure completed.
+- Development environment configured.
+- Core implementation has not started.
 
 ## Roadmap
 
