@@ -144,11 +144,11 @@
 **Objective:** Ensure no job is permanently stuck in `processing` if a worker is killed (including SIGKILL).
 
 **Features Completed:**
-- Detection of orphaned jobs stuck in `processing` due to worker crashes
-- Automatic recovery of orphaned jobs back to `pending`
-- Worst-case recovery time under 60 seconds
+- Stale worker detection: Worker PIDs are verified on startup and stale registrations are removed
+- Orphaned job detection: Jobs stuck in `processing` with no active worker are identified
+- Automatic crash recovery: Orphaned jobs are recovered back to `pending` (worker_id cleared) automatically when any new worker starts
 
-**Expected Outcome:** After a SIGKILL, orphaned jobs are detected and re-queued automatically. No job is ever permanently stuck.
+**Expected Outcome:** After a SIGKILL, orphaned jobs are detected and recovered automatically upon the next worker startup. No job is ever permanently stuck.
 
 ---
 

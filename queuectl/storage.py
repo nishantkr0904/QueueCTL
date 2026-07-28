@@ -10,6 +10,7 @@ This module provides all database operations for jobs:
   6. Atomically claim the next pending job for a worker.
   7. Enforce exponential backoff for retried jobs during claiming.
   8. Re-enqueue a dead-lettered job (DLQ retry).
+  9. Crash recovery (stale worker removal, orphaned job detection and recovery).
 
 Every function takes a sqlite3.Connection as its first argument.
 This module never opens or closes connections itself — that is
@@ -302,6 +303,50 @@ def retry_dead_job(connection, job_id):
     connection.commit()
 
     return cursor.rowcount > 0
+
+# ---------------------------------------------------------------------------
+# Crash Recovery
+# ---------------------------------------------------------------------------
+
+def get_all_worker_pids(connection):
+    """
+    Fetch the PIDs of all workers currently registered in the database.
+    """
+    cursor = connection.execute("SELECT pid FROM workers")
+    return [row[0] for row in cursor.fetchall()]
+
+def remove_worker_registration(connection, pid):
+    """
+    Remove a stale worker registration from the database.
+    """
+    cursor = connection.execute("DELETE FROM workers WHERE pid = ?", (pid,))
+    connection.commit()
+    return cursor.rowcount > 0
+
+def get_orphaned_jobs(connection):
+    """
+    Find jobs that are 'processing' but their worker_id is not in the active workers table.
+    """
+    cursor = connection.execute(
+        f"SELECT {_JOB_COLUMNS} FROM jobs "
+        "WHERE state = 'processing' "
+        "  AND worker_id NOT IN (SELECT pid FROM workers)"
+    )
+    return [Job.from_row(row) for row in cursor.fetchall()]
+
+def recover_orphaned_jobs(connection):
+    """
+    Find all orphaned jobs and reset them to 'pending'.
+    Reuses existing CRUD functions whenever possible.
+    """
+    orphaned_jobs = get_orphaned_jobs(connection)
+    for job in orphaned_jobs:
+        job.state = 'pending'
+        job.worker_id = None
+        # update_job automatically sets updated_at to current timestamp
+        # and preserves all other fields (id, command, attempts, max_retries, created_at)
+        update_job(connection, job)
+    return len(orphaned_jobs)
 
 # ---------------------------------------------------------------------------
 # Claim — atomic job claiming

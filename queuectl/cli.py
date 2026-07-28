@@ -34,6 +34,7 @@ from queuectl.worker import (
     deregister_worker,
     run_worker,
     _handle_shutdown_signal,
+    perform_crash_recovery,
 )
 
 
@@ -200,6 +201,12 @@ def _run_single_worker():
     connection = open_connection()
     try:
         initialize_database(connection)
+
+        # --- Crash Recovery ---
+        # Detect and recover orphaned jobs from any previously crashed workers
+        # BEFORE this new worker registers itself.
+        perform_crash_recovery(connection)
+
         register_worker(connection, pid)
 
         # Run the claim → execute loop until the queue is drained

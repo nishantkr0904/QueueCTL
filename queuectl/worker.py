@@ -12,8 +12,8 @@ The worker does NOT implement its own claiming logic.  It delegates
 all job claiming to claim_job() in storage.py, which uses
 BEGIN IMMEDIATE for atomic, cross-process-safe claiming.
 
-The worker does NOT implement crash recovery, heartbeat,
-or continuous polling.  Those belong to later phases.
+The worker does NOT implement heartbeat or continuous polling.
+Those belong to later phases.
 """
 
 import os
@@ -60,6 +60,48 @@ def _handle_shutdown_signal(signum, frame):
     """
     global _shutdown_requested
     _shutdown_requested = True
+
+
+# ---------------------------------------------------------------------------
+# Crash Recovery
+# ---------------------------------------------------------------------------
+
+def perform_crash_recovery(connection):
+    """
+    Detect and recover orphaned jobs from crashed workers.
+
+    Steps:
+      1. Fetch all registered worker PIDs.
+      2. Check if each PID is still alive. If not, remove its registration.
+      3. Recover any jobs left in 'processing' by those stale workers.
+
+    Args:
+        connection: An open sqlite3.Connection.
+    """
+    from queuectl.storage import (
+        get_all_worker_pids,
+        remove_worker_registration,
+        recover_orphaned_jobs,
+    )
+
+    # 1. Remove stale worker registrations
+    active_pids = get_all_worker_pids(connection)
+    for pid in active_pids:
+        is_alive = True
+        try:
+            # os.kill(pid, 0) checks if the process exists
+            os.kill(pid, 0)
+        except OSError:
+            is_alive = False
+            
+        if not is_alive:
+            remove_worker_registration(connection, pid)
+            
+    # 2. Recover orphaned jobs
+    # Now that stale workers are removed, any job in 'processing' whose worker_id
+    # is not in the active workers table is an orphaned job.
+    recover_orphaned_jobs(connection)
+
 
 
 # ---------------------------------------------------------------------------
