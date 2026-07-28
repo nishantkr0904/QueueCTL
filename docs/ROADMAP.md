@@ -92,18 +92,19 @@
 
 ## Phase 7 — Worker Execution
 
-**Objective:** Build workers that pick up pending jobs and execute them, with support for multiple workers in parallel.
+**Objective:** Build workers that claim pending jobs (via the existing `claim_job()`) and execute them, with support for multiple workers in parallel.
 
 **Features Completed:**
 - `queuectl worker start` — starts a single worker in the foreground
-- `queuectl worker start --count N` — start N workers in the foreground
-- Worker polls for pending jobs, claims them atomically, and executes the shell command
-- Job state transitions: `pending → processing → completed` (on exit code 0) or `pending → processing → failed` (on non-zero exit code)
-- Workers from separate OS processes can run concurrently
-- Worker registration (tracking active workers)
-- Graceful shutdown on SIGTERM/SIGINT — finish the in-flight job, then exit
+- `queuectl worker start --count N` — forks N independent worker processes
+- Workers obtain work exclusively through `claim_job()` (no new claiming logic)
+- Shell command execution using `subprocess.run()` (synchronous, simple)
+- Job state transitions: `processing → completed` (exit code 0) or `processing → failed` (exit code ≠ 0)
+- Worker registration in the `workers` table on startup, deregistration on clean exit
+- Graceful shutdown on SIGINT/SIGTERM — current job finishes, no new jobs claimed
+- Clean exit when the queue is drained (no continuous polling)
 
-**Expected Outcome:** Multiple workers across separate terminals process jobs in parallel. Every job runs exactly once. Graceful shutdown works correctly.
+**Expected Outcome:** One or more workers process all pending jobs. Each job runs exactly once (guaranteed by `claim_job()`). Workers exit after draining the queue or receiving a shutdown signal. No retries, DLQ, crash recovery, or worker stop.
 
 ---
 

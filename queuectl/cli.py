@@ -7,14 +7,19 @@ This module defines the command structure using Click:
   - Command groups with subcommands: worker (start, stop),
     dlq (list, retry), config (set).
 
-The 'enqueue' command is fully implemented. All other commands are
-placeholders that print "Not implemented yet."
+Implemented commands:
+  - enqueue     — add a new job to the queue
+  - worker start — start one or more workers in the foreground
+
+All other commands are placeholders that print "Not implemented yet."
 
 The command structure matches the interface contract defined in
 INSTRUCTIONS.md (Section: CLI Commands).
 """
 
 import json
+import os
+import signal
 import sqlite3
 
 import click
@@ -22,6 +27,12 @@ import click
 from queuectl.db import open_connection, close_connection, initialize_database
 from queuectl.models import Job, DEFAULT_MAX_RETRIES
 from queuectl.storage import insert_job
+from queuectl.worker import (
+    register_worker,
+    deregister_worker,
+    run_worker,
+    _handle_shutdown_signal,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -143,11 +154,97 @@ def worker():
 
 
 # Usage: queuectl worker start [--count N]
+#
+# Starts one or more workers that claim pending jobs and execute them.
+# The command blocks until all workers finish (queue drained or signal).
+#
+# With --count 1 (default): runs the worker directly in this process.
+# With --count N (N > 1):   forks N child processes, each running an
+#                           independent worker.  The parent waits for
+#                           all children to finish.
+
 @worker.command()
 @click.option("--count", default=1, type=int, help="Number of workers to start.")
 def start(count):
     """Start workers in the foreground."""
-    click.echo("Not implemented yet.")
+
+    if count < 1:
+        click.echo("Error: --count must be at least 1.", err=True)
+        raise SystemExit(1)
+
+    if count == 1:
+        # --- Single worker: run directly in this process ---
+        _run_single_worker()
+    else:
+        # --- Multiple workers: fork child processes ---
+        _run_multiple_workers(count)
+
+
+def _run_single_worker():
+    """
+    Run a single worker in the current process.
+
+    Opens a database connection, registers the worker, installs
+    signal handlers for graceful shutdown, runs the worker loop,
+    and deregisters on exit.
+    """
+    pid = os.getpid()
+
+    # Install signal handlers BEFORE starting work so that a
+    # signal received at any point sets the shutdown flag.
+    signal.signal(signal.SIGINT, _handle_shutdown_signal)
+    signal.signal(signal.SIGTERM, _handle_shutdown_signal)
+
+    connection = open_connection()
+    try:
+        initialize_database(connection)
+        register_worker(connection, pid)
+
+        # Run the claim → execute loop until the queue is drained
+        # or a shutdown signal is received.
+        run_worker(connection)
+
+        deregister_worker(connection, pid)
+    finally:
+        close_connection(connection)
+
+
+def _run_multiple_workers(count):
+    """
+    Fork 'count' child processes, each running an independent worker.
+
+    The parent process waits for all children to finish.  Each child
+    opens its own database connection (SQLite connections must not be
+    shared across forks) and runs _run_single_worker().
+
+    Args:
+        count: Number of worker processes to launch.
+    """
+    child_pids = []
+
+    for _ in range(count):
+        pid = os.fork()
+
+        if pid == 0:
+            # --- Child process ---
+            # Run a worker and exit.  os._exit() is used instead of
+            # sys.exit() to avoid running parent cleanup handlers
+            # (e.g., atexit) in the child.
+            try:
+                _run_single_worker()
+            except Exception:
+                os._exit(1)
+            os._exit(0)
+        else:
+            # --- Parent process ---
+            child_pids.append(pid)
+
+    # Parent: wait for every child to finish.
+    # This makes 'worker start --count N' block until all workers
+    # are done, which matches the interface contract ("runs in the
+    # foreground").
+    for cpid in child_pids:
+        os.waitpid(cpid, 0)
 
 
 # Usage: queuectl worker stop
