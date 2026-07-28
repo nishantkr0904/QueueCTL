@@ -6,12 +6,13 @@ This module is responsible for:
   2. Registering and deregistering workers in the database.
   3. Handling graceful shutdown on SIGINT / SIGTERM.
   4. Retrying failed jobs with exponential backoff.
+  5. Moving permanently failed jobs to the Dead Letter Queue (state='dead').
 
 The worker does NOT implement its own claiming logic.  It delegates
 all job claiming to claim_job() in storage.py, which uses
 BEGIN IMMEDIATE for atomic, cross-process-safe claiming.
 
-The worker does NOT implement DLQ, crash recovery, heartbeat,
+The worker does NOT implement crash recovery, heartbeat,
 or continuous polling.  Those belong to later phases.
 """
 
@@ -19,7 +20,9 @@ import os
 import signal
 import subprocess
 
-from queuectl.models import STATE_COMPLETED, STATE_FAILED, STATE_PENDING, _now_utc
+from queuectl.models import (
+    STATE_COMPLETED, STATE_DEAD, STATE_FAILED, STATE_PENDING, _now_utc,
+)
 from queuectl.storage import claim_job, update_job
 
 
@@ -126,8 +129,8 @@ def execute_job(connection, job):
       1. Increment the attempts counter.
       2. If attempts <= max_retries, set state back to 'pending'
          so the job can be picked up again after its backoff delay.
-      3. If attempts > max_retries, leave the job as 'failed'.
-         (A later phase will move it to the DLQ.)
+      3. If attempts > max_retries, move the job to the Dead Letter
+         Queue (state = 'dead').
 
     The command is executed via the operating system's shell
     (shell=True) because job commands are user-provided shell
@@ -168,9 +171,10 @@ def execute_job(connection, job):
             # until  updated_at + (base ^ attempts)  has passed.
             job.state = STATE_PENDING
         else:
-            # All retries exhausted — leave as 'failed'.
-            # A later phase will move this to the Dead Letter Queue.
-            job.state = STATE_FAILED
+            # All retries exhausted — move to the Dead Letter Queue.
+            # The job stays in the same database row with state='dead'.
+            # It can be re-enqueued later via `queuectl dlq retry`.
+            job.state = STATE_DEAD
 
     # Persist the final state.  update_job() automatically
     # refreshes the updated_at timestamp.

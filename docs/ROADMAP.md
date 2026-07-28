@@ -124,7 +124,22 @@
 
 ---
 
-## Phase 9 — Crash Recovery
+## Phase 9 — Dead Letter Queue
+
+**Objective:** Automatically move permanently failed jobs into the Dead Letter Queue and provide CLI commands to inspect and retry them.
+
+**Features Completed:**
+- Jobs whose retries are exhausted transition to `state = 'dead'` (not `failed`)
+- The DLQ is implemented using the existing `jobs` table — no new tables, no row duplication
+- `queuectl dlq list` — display all dead-lettered jobs with their metadata
+- `queuectl dlq retry <id>` — re-enqueue a dead job (resets state to `pending`, attempts to 0)
+- `retry_dead_job()` in storage.py — guarded UPDATE (`AND state = 'dead'`) prevents retrying non-dead jobs
+
+**Expected Outcome:** A failing job that exhausts all retries lands in the DLQ (`state = 'dead'`). Users can inspect the DLQ and re-enqueue jobs for another round of execution.
+
+---
+
+## Phase 10 — Crash Recovery
 
 **Objective:** Ensure no job is permanently stuck in `processing` if a worker is killed (including SIGKILL).
 
@@ -137,7 +152,7 @@
 
 ---
 
-## Phase 10 — Worker Stop (Cross-Process Signaling)
+## Phase 11 — Worker Stop (Cross-Process Signaling)
 
 **Objective:** Allow graceful worker shutdown from a separate terminal.
 
@@ -149,7 +164,7 @@
 
 ---
 
-## Phase 11 — Configuration Management
+## Phase 12 — Configuration Management
 
 **Objective:** Make retry and backoff settings configurable and persistent.
 
@@ -162,7 +177,7 @@
 
 ---
 
-## Phase 12 — Documentation & Submission
+## Phase 13 — Documentation & Submission
 
 **Objective:** Produce all required documentation and prepare the final submission.
 

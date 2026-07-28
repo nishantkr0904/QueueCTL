@@ -8,8 +8,10 @@ This module defines the command structure using Click:
     dlq (list, retry), config (set).
 
 Implemented commands:
-  - enqueue     — add a new job to the queue
+  - enqueue      — add a new job to the queue
   - worker start — start one or more workers in the foreground
+  - dlq list     — list all dead-lettered jobs
+  - dlq retry    — re-enqueue a dead job
 
 All other commands are placeholders that print "Not implemented yet."
 
@@ -25,8 +27,8 @@ import sqlite3
 import click
 
 from queuectl.db import open_connection, close_connection, initialize_database
-from queuectl.models import Job, DEFAULT_MAX_RETRIES
-from queuectl.storage import insert_job
+from queuectl.models import Job, DEFAULT_MAX_RETRIES, STATE_DEAD
+from queuectl.storage import insert_job, get_jobs_by_state, retry_dead_job
 from queuectl.worker import (
     register_worker,
     deregister_worker,
@@ -266,20 +268,64 @@ def dlq():
 
 
 # Usage: queuectl dlq list
-# Note: same naming trick as the top-level 'list' command — the Python
-# function is called 'dlq_list' but the Click command name is 'list'.
+#
+# Shows every job whose state is 'dead' — the Dead Letter Queue.
+# Reuses get_jobs_by_state() from the storage layer.
+
 @dlq.command("list")
 def dlq_list():
     """List all dead-lettered jobs."""
-    click.echo("Not implemented yet.")
+    connection = open_connection()
+    try:
+        initialize_database(connection)
+        dead_jobs = get_jobs_by_state(connection, STATE_DEAD)
+    finally:
+        close_connection(connection)
+
+    if not dead_jobs:
+        click.echo("No jobs in the Dead Letter Queue.")
+        return
+
+    # Simple, readable output — one line per job showing the key
+    # fields a user would need when deciding whether to retry.
+    click.echo(f"Dead Letter Queue ({len(dead_jobs)} job(s)):")
+    click.echo()
+    for job in dead_jobs:
+        click.echo(f"  ID:          {job.id}")
+        click.echo(f"  Command:     {job.command}")
+        click.echo(f"  Attempts:    {job.attempts}")
+        click.echo(f"  Max Retries: {job.max_retries}")
+        click.echo(f"  Created:     {job.created_at}")
+        click.echo(f"  Updated:     {job.updated_at}")
+        click.echo()
 
 
 # Usage: queuectl dlq retry <job_id>
+#
+# Re-enqueues a dead job so workers can pick it up again.
+# Resets state='pending', attempts=0, worker_id=NULL.
+# Preserves id, command, created_at, max_retries.
+
 @dlq.command()
 @click.argument("job_id")
 def retry(job_id):
     """Re-enqueue a dead job."""
-    click.echo("Not implemented yet.")
+    connection = open_connection()
+    try:
+        initialize_database(connection)
+        success = retry_dead_job(connection, job_id)
+    finally:
+        close_connection(connection)
+
+    if success:
+        click.echo(f"Job '{job_id}' re-enqueued from the Dead Letter Queue.")
+    else:
+        # Either the job doesn't exist, or it's not in 'dead' state.
+        click.echo(
+            f"Error: No dead job with id '{job_id}' found.",
+            err=True,
+        )
+        raise SystemExit(1)
 
 
 # ---------------------------------------------------------------------------

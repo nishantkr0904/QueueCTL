@@ -9,6 +9,7 @@ This module provides all database operations for jobs:
   5. Delete a job by ID.
   6. Atomically claim the next pending job for a worker.
   7. Enforce exponential backoff for retried jobs during claiming.
+  8. Re-enqueue a dead-lettered job (DLQ retry).
 
 Every function takes a sqlite3.Connection as its first argument.
 This module never opens or closes connections itself — that is
@@ -249,6 +250,58 @@ def delete_job(connection, job_id):
 
     return cursor.rowcount > 0
 
+
+# ---------------------------------------------------------------------------
+# DLQ — Dead Letter Queue retry
+# ---------------------------------------------------------------------------
+
+def retry_dead_job(connection, job_id):
+    """
+    Re-enqueue a dead-lettered job so it can be executed again.
+
+    This is the storage operation behind `queuectl dlq retry <id>`.
+    It resets the job to its initial state so workers will pick it
+    up on their next claiming cycle.
+
+    Only jobs in state='dead' can be retried.  The guard in the
+    WHERE clause prevents accidentally re-enqueuing jobs in other
+    states (e.g., a job that is currently processing).
+
+    Fields reset:
+        - state      → 'pending'  (eligible for claiming)
+        - attempts   → 0          (fresh start)
+        - worker_id  → NULL       (no worker assigned)
+        - updated_at → now        (timestamp of the retry)
+
+    Fields preserved:
+        - id, command, created_at, max_retries
+        (the job's identity and original configuration stay intact)
+
+    Args:
+        connection: An open sqlite3.Connection.
+        job_id:     The ID of the dead job to retry.
+
+    Returns:
+        True if the job was re-enqueued successfully.
+        False if no job with that ID exists in the 'dead' state.
+    """
+    now = _now_utc()
+
+    cursor = connection.execute(
+        """
+        UPDATE jobs
+        SET state      = 'pending',
+            attempts   = 0,
+            worker_id  = NULL,
+            updated_at = ?
+        WHERE id = ?
+          AND state = 'dead'
+        """,
+        (now, job_id),
+    )
+    connection.commit()
+
+    return cursor.rowcount > 0
 
 # ---------------------------------------------------------------------------
 # Claim — atomic job claiming
