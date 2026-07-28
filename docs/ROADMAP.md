@@ -108,18 +108,19 @@
 
 ---
 
-## Phase 8 — Retry with Exponential Backoff & Dead Letter Queue
+## Phase 8 — Retry with Exponential Backoff
 
-**Objective:** Handle job failures with automatic retries and move permanently failed jobs to the DLQ.
+**Objective:** Automatically retry failed jobs with increasing delays, and stop retrying after `max_retries` is exceeded.
 
 **Features Completed:**
-- Failed jobs retry automatically after a delay of `base ^ attempts` seconds
-- Default backoff base is 2
-- After `max_retries` exhausted, job moves to `dead` state (DLQ)
-- `queuectl dlq list` — view all dead-lettered jobs
-- `queuectl dlq retry <id>` — re-enqueue a dead job
+- Failed jobs automatically increment `attempts` and return to `pending` if retries remain
+- Jobs whose `attempts > max_retries` stay in `failed` state (no further retries)
+- Exponential backoff formula: `delay = backoff_base ^ attempts` seconds (default base = 2)
+- `claim_job()` enforces backoff — pending jobs with `attempts > 0` are only claimed after their delay has expired
+- Backoff is computed in SQL using `datetime(updated_at, '+N seconds')` for accurate, timezone-safe comparisons
+- Fresh jobs (`attempts = 0`) are always immediately eligible — no backoff
 
-**Expected Outcome:** Failing jobs are retried with increasing delays. Permanently failed jobs land in the DLQ and can be retried manually.
+**Expected Outcome:** A failing job is retried with delays of 2s, 4s, 8s (with base=2). After `max_retries` failures, it stays `failed`. Workers respect the backoff delay — a job is never claimed before its wait period has elapsed.
 
 ---
 

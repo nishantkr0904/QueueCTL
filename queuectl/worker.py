@@ -5,21 +5,33 @@ This module is responsible for:
   1. Running a single worker that claims and executes jobs.
   2. Registering and deregistering workers in the database.
   3. Handling graceful shutdown on SIGINT / SIGTERM.
+  4. Retrying failed jobs with exponential backoff.
 
 The worker does NOT implement its own claiming logic.  It delegates
 all job claiming to claim_job() in storage.py, which uses
 BEGIN IMMEDIATE for atomic, cross-process-safe claiming.
 
-The worker does NOT implement retries, DLQ, crash recovery,
-heartbeat, or continuous polling.  Those belong to later phases.
+The worker does NOT implement DLQ, crash recovery, heartbeat,
+or continuous polling.  Those belong to later phases.
 """
 
 import os
 import signal
 import subprocess
 
-from queuectl.models import STATE_COMPLETED, STATE_FAILED, _now_utc
+from queuectl.models import STATE_COMPLETED, STATE_FAILED, STATE_PENDING, _now_utc
 from queuectl.storage import claim_job, update_job
+
+
+# ---------------------------------------------------------------------------
+# Backoff constant
+# ---------------------------------------------------------------------------
+# Default base for exponential backoff:  delay = base ^ attempts  seconds.
+# With base=2:  first retry after 2s, second after 4s, third after 8s.
+# This will become configurable via `config set backoff-base` in a later
+# phase.  For now, we use the default value from INSTRUCTIONS.md.
+
+DEFAULT_BACKOFF_BASE = 2
 
 
 # ---------------------------------------------------------------------------
@@ -108,7 +120,14 @@ def execute_job(connection, job):
     waits for it to finish, and then updates the job state based
     on the exit code:
       - exit code 0   → state = 'completed'
-      - exit code ≠ 0 → state = 'failed'
+      - exit code ≠ 0 → state = 'failed', then retry logic applies
+
+    Retry logic (on failure):
+      1. Increment the attempts counter.
+      2. If attempts <= max_retries, set state back to 'pending'
+         so the job can be picked up again after its backoff delay.
+      3. If attempts > max_retries, leave the job as 'failed'.
+         (A later phase will move it to the DLQ.)
 
     The command is executed via the operating system's shell
     (shell=True) because job commands are user-provided shell
@@ -118,15 +137,6 @@ def execute_job(connection, job):
         connection: An open sqlite3.Connection.
         job:        A Job instance that has already been claimed
                     (state = 'processing').
-
-    Notes:
-        - The subprocess runs OUTSIDE any database transaction.
-          The database write lock is NOT held during execution.
-          This is critical — a job could take seconds or minutes,
-          and holding the lock would block all other workers.
-        - Retries are NOT implemented here.  If the command fails,
-          the job is simply marked 'failed'.  Later phases will
-          add retry logic on top of this.
     """
     # Run the shell command.  subprocess.run() blocks until the
     # command finishes, which is exactly what we want — simple,
@@ -137,16 +147,30 @@ def execute_job(connection, job):
         capture_output=True,
     )
 
-    # Update the job state based on the exit code.
-    if result.returncode == 0:
-        job.state = STATE_COMPLETED
-    else:
-        job.state = STATE_FAILED
-
     # Clear worker_id — this worker is done with the job.
     # (The worker_id was set during claiming; clearing it makes
     # the final state cleaner and avoids confusion later.)
     job.worker_id = None
+
+    if result.returncode == 0:
+        # --- Success ---
+        job.state = STATE_COMPLETED
+    else:
+        # --- Failure: apply retry logic ---
+        job.attempts += 1
+
+        if job.attempts <= job.max_retries:
+            # Retries remain — move the job back to 'pending'.
+            # The updated_at timestamp (set by update_job below)
+            # records WHEN this failure happened.  claim_job()
+            # uses updated_at to enforce the backoff delay:
+            # a pending job with attempts > 0 won't be claimed
+            # until  updated_at + (base ^ attempts)  has passed.
+            job.state = STATE_PENDING
+        else:
+            # All retries exhausted — leave as 'failed'.
+            # A later phase will move this to the Dead Letter Queue.
+            job.state = STATE_FAILED
 
     # Persist the final state.  update_job() automatically
     # refreshes the updated_at timestamp.

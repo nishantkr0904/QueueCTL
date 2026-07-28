@@ -8,6 +8,7 @@ This module provides all database operations for jobs:
   4. Update a job's fields.
   5. Delete a job by ID.
   6. Atomically claim the next pending job for a worker.
+  7. Enforce exponential backoff for retried jobs during claiming.
 
 Every function takes a sqlite3.Connection as its first argument.
 This module never opens or closes connections itself — that is
@@ -317,12 +318,33 @@ def claim_job(connection, worker_id):
     connection.execute("BEGIN IMMEDIATE")
 
     try:
-        # --- Step 2: Find the oldest pending job ---
+        # --- Step 2: Find the oldest ELIGIBLE pending job ---
+        # A pending job is eligible if:
+        #   a) It has never been attempted (attempts = 0) — fresh job,
+        #      no backoff needed.
+        #   b) It has been attempted before (attempts > 0) AND enough
+        #      time has passed since its last failure.  The required
+        #      delay is: backoff_base ^ attempts  seconds.
+        #
+        # We compute the eligibility cutoff using SQLite's datetime()
+        # function:  updated_at + delay  must be <= the current time.
+        # The '+N seconds' modifier adds the backoff delay directly
+        # in the SQL query, so ineligible jobs are never even selected.
+        #
+        # Import here to avoid circular imports (worker → storage → worker).
+        # This is a simple constant lookup, not heavy logic.
+        from queuectl.worker import DEFAULT_BACKOFF_BASE
+
         cursor = connection.execute(
             f"SELECT {_JOB_COLUMNS} FROM jobs "
             "WHERE state = 'pending' "
+            "  AND ("
+            "        attempts = 0"
+            "     OR datetime(updated_at, '+' || CAST(ROUND(POW(?, attempts)) AS INTEGER) || ' seconds') <= datetime(?)"
+            "  ) "
             "ORDER BY created_at ASC "
-            "LIMIT 1"
+            "LIMIT 1",
+            (DEFAULT_BACKOFF_BASE, now),
         )
         row = cursor.fetchone()
 
