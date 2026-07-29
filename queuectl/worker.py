@@ -205,7 +205,7 @@ def execute_job(connection, job):
         # --- Failure: apply retry logic ---
         job.attempts += 1
 
-        if job.attempts <= job.max_retries:
+        if job.attempts < job.max_retries:
             # Retries remain — move the job back to 'pending'.
             # The updated_at timestamp (set by update_job below)
             # records WHEN this failure happened.  claim_job()
