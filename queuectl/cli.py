@@ -36,6 +36,8 @@ from queuectl.storage import (
     get_all_worker_pids,
     get_config,
     set_config,
+    count_jobs_by_state,
+    get_all_jobs,
 )
 from queuectl.worker import (
     register_worker,
@@ -133,7 +135,20 @@ def enqueue(job_json):
 @cli.command()
 def status():
     """Show a summary of all job states and active workers."""
-    click.echo("Not implemented yet.")
+    connection = open_connection()
+    try:
+        initialize_database(connection)
+        counts = count_jobs_by_state(connection)
+        pids = get_all_worker_pids(connection)
+    finally:
+        close_connection(connection)
+
+    click.echo(f"Pending:     {counts.get('pending', 0)}")
+    click.echo(f"Processing:  {counts.get('processing', 0)}")
+    click.echo(f"Completed:   {counts.get('completed', 0)}")
+    click.echo(f"Failed:      {counts.get('failed', 0)}")
+    click.echo(f"Dead:        {counts.get('dead', 0)}")
+    click.echo(f"Workers:     {len(pids)}")
 
 
 # ---------------------------------------------------------------------------
@@ -152,7 +167,47 @@ def status():
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON array.")
 def list_jobs(state, as_json):
     """List jobs, optionally filtered by state."""
-    click.echo("Not implemented yet.")
+    connection = open_connection()
+    try:
+        initialize_database(connection)
+        if state:
+            jobs = get_jobs_by_state(connection, state)
+        else:
+            jobs = get_all_jobs(connection)
+    finally:
+        close_connection(connection)
+
+    if as_json:
+        if not jobs:
+            click.echo("[]")
+            return
+        
+        jobs_list = []
+        for job in jobs:
+            jobs_list.append({
+                "id": job.id,
+                "command": job.command,
+                "state": job.state,
+                "attempts": job.attempts,
+                "max_retries": job.max_retries,
+                "created_at": job.created_at,
+                "updated_at": job.updated_at,
+                "worker_id": job.worker_id,
+            })
+        click.echo(json.dumps(jobs_list))
+    else:
+        if not jobs:
+            click.echo("No jobs found.")
+            return
+
+        for i, job in enumerate(jobs):
+            if i > 0:
+                click.echo()
+            click.echo(f"ID: {job.id}")
+            click.echo(f"State: {job.state}")
+            click.echo(f"Attempts: {job.attempts}")
+            worker_val = job.worker_id if job.worker_id is not None else "-"
+            click.echo(f"Worker: {worker_val}")
 
 
 # ---------------------------------------------------------------------------
