@@ -102,9 +102,9 @@
 - Job state transitions: `processing → completed` (exit code 0) or `processing → failed` (exit code ≠ 0)
 - Worker registration in the `workers` table on startup, deregistration on clean exit
 - Graceful shutdown on SIGINT/SIGTERM — current job finishes, no new jobs claimed
-- Clean exit when the queue is drained (no continuous polling)
+- Continuous polling loop that remains in the foreground until SIGINT, SIGTERM, or `queuectl worker stop`
 
-**Expected Outcome:** One or more workers process all pending jobs. Each job runs exactly once (guaranteed by `claim_job()`). Workers exit after draining the queue or receiving a shutdown signal. No retries, DLQ, crash recovery, or worker stop.
+**Expected Outcome:** One or more workers process all pending jobs. Each job runs exactly once (guaranteed by `claim_job()`). Workers remain in the foreground, polling for work until they receive SIGINT, SIGTERM, or `queuectl worker stop`. No retries, DLQ, crash recovery, or worker stop.
 
 ---
 

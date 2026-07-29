@@ -7,25 +7,20 @@ QueueCTL/
 ├── LICENSE
 ├── .gitignore
 ├── requirements.txt
-├── setup.py
 │
 ├── docs/
 │   ├── INSTRUCTIONS.md
 │   ├── ROADMAP.md
 │   ├── PROJECT_STRUCTURE.md
-│   ├── ARCHITECTURE.md
-│   └── DEVELOPMENT_NOTES.md
+│   └── ARCHITECTURE.md
 │
 ├── queuectl/
 │   ├── __init__.py
 │   ├── main.py
 │   ├── cli.py
 │   ├── models.py
-│   ├── store.py
-│   ├── worker.py
-│   ├── scheduler.py
-│   ├── config.py
-│   └── utils.py
+│   ├── storage.py
+│   └── worker.py
 │
 ├── tests/
 │   ├── __init__.py

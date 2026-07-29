@@ -1,67 +1,171 @@
 # QueueCTL
 
-A CLI-based background job queue system. It manages background jobs with worker processes, retries failures with exponential backoff, and maintains a Dead Letter Queue (DLQ) for permanently failed jobs.
+QueueCTL is a minimal, production-grade CLI-based background job queue system built with Python and SQLite. It handles concurrent background tasks, automated exponential backoff retries, dead-letter queues, and crash recovery with no external daemons or heavy message brokers.
 
-## Objective
+---
 
-Build a minimal, production-grade job queue that supports:
+## Features
 
-- Enqueuing and managing background jobs via CLI
-- Running multiple worker processes in parallel across separate terminals
-- Automatic retries with exponential backoff
-- A Dead Letter Queue after retries are exhausted
-- Persistent job storage across restarts and crashes
-- Crash recovery — no job is ever stuck in processing
+- **Enqueue:** Add background jobs via a simple JSON payload in the CLI.
+- **Worker Execution:** Run background jobs automatically in separate foreground processes.
+- **Retry:** Automatically retry failed jobs multiple times.
+- **Exponential Backoff:** Wait progressively longer between each retry attempt.
+- **Dead Letter Queue (DLQ):** Permanently failed jobs are stored for manual inspection and manual retry.
+- **Crash Recovery:** Workers that are forcefully killed (`SIGKILL`) leave orphaned jobs. These jobs are detected and automatically recovered on the next worker startup.
+- **Worker Stop:** Gracefully stop all running worker processes across terminals by sending `SIGTERM`.
+- **Configuration Management:** Manage configuration like maximum retry limits and backoff timing persistently via the CLI.
 
-## Current Status
+---
 
-🚧 **In Development** 
-- Project structure completed.
-- Development environment configured.
-- Core implementation has not started.
+## Architecture Overview
 
-## Roadmap
+QueueCTL operates entirely through a shared SQLite database with the following flow:
 
-| Phase | Focus | Status |
-|-------|-------|--------|
-| 1 | Project Setup & Core Data Model | 🔄 In Progress |
-| 2 | Job Enqueue & Listing | ⬜ Not Started |
-| 3 | Single Worker Execution | ⬜ Not Started |
-| 4 | Multi-Worker Concurrency & Atomic Job Claiming | ⬜ Not Started |
-| 5 | Retry with Exponential Backoff & Dead Letter Queue | ⬜ Not Started |
-| 6 | Crash Recovery | ⬜ Not Started |
-| 7 | Worker Stop (Cross-Process Signaling) | ⬜ Not Started |
-| 8 | Configuration Management | ⬜ Not Started |
-| 9 | Documentation & Submission | ⬜ Not Started |
+**CLI** 
+↓ (Validates and parses user commands)
+**Storage** 
+↓ (Translates CLI intents into safe database operations, including atomic job claims)
+**SQLite** 
+↓ (Persists jobs, configurations, and worker metadata safely via OS-level locking)
+**Workers**
+(Poll the DB, securely lock jobs, execute shell commands, and push the final state back)
 
-See [docs/ROADMAP.md](docs/ROADMAP.md) for detailed phase descriptions.
+---
 
-## Repository Structure
+## Project Structure
 
+- **`queuectl/`**: The core application source code.
+  - `main.py`: CLI entry point.
+  - `cli.py`: Defines the Click-based command line interface and logic.
+  - `models.py`: Defines the `Job` data model and state constants.
+  - `storage.py`: Handles all database operations, including the atomic `claim_job` locking mechanism.
+  - `worker.py`: Manages the worker polling loop, subprocess execution, and graceful shutdown signal handlers.
+  - `db.py`: Bootstraps SQLite tables and connections.
+- **`data/`**: Runtime storage for the local `jobs.db` database.
+- **`docs/`**: Internal documentation for the architecture and roadmap.
+
+---
+
+## Requirements
+
+- **Python:** 3.8+
+- **SQLite:** 3.0+
+- **Standard Library:** Heavily utilizes Python's built-in `sqlite3`, `subprocess`, and `os` modules.
+- **Click:** The only third-party dependency for CLI framework (`pip install click`).
+
+---
+
+## Installation
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/nishantkr0904/QueueCTL.git
+cd QueueCTL
+
+# 2. Create a virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+
+# 3. Install requirements
+pip install -r requirements.txt
+
+# 4. Initialize the database and test basic functionality
+python3 -m queuectl.main status
 ```
-QueueCTL/
-├── README.md               ← This file
-├── DECISIONS.md             ← Design decisions (added later)
-├── docs/                    ← Planning & architecture docs
-│   ├── INSTRUCTIONS.md
-│   ├── ROADMAP.md
-│   ├── PROJECT_STRUCTURE.md
-│   └── ARCHITECTURE.md
-├── queuectl/                ← Application source code
-│   ├── main.py              ← CLI entry point
-│   ├── cli.py               ← Command definitions
-│   ├── models.py            ← Job data model
-│   ├── store.py             ← Persistence & locking
-│   ├── worker.py            ← Worker lifecycle
-│   ├── scheduler.py         ← Retry, backoff & recovery
-│   ├── config.py            ← Configuration management
-│   └── utils.py             ← Shared utilities
-├── tests/                   ← Test suite
-└── data/                    ← Runtime data (gitignored)
+*(Note: QueueCTL auto-initializes the database upon running any valid command for the first time.)*
+
+---
+
+## Usage Examples
+
+**Add a new job to the queue:**
+```bash
+python -m queuectl.main enqueue '{"id": "job1", "command": "echo Hello World"}'
 ```
 
-See [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md) for detailed file responsibilities.
+**Start a single foreground worker:**
+```bash
+python -m queuectl.main worker start
+```
 
-## License
+**Start multiple parallel workers (forks 4 processes):**
+```bash
+python -m queuectl.main worker start --count 4
+```
 
-This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
+**Gracefully stop all running workers from another terminal:**
+```bash
+python -m queuectl.main worker stop
+```
+
+**List all dead-lettered jobs:**
+```bash
+python -m queuectl.main dlq list
+```
+
+**Manually retry a dead-lettered job:**
+```bash
+python -m queuectl.main dlq retry job1
+```
+
+**Configure the default max retries for new jobs:**
+```bash
+python -m queuectl.main config set max-retries 5
+```
+
+**Configure the exponential backoff base delay:**
+```bash
+python -m queuectl.main config set backoff-base 3
+```
+
+---
+
+## Job Lifecycle
+
+A job traverses through the following states:
+
+1. **pending** (Waiting for a worker)
+   ↓
+2. **processing** (Claimed by a worker and executing)
+   ↓
+3. **completed** (Exited with code 0)
+
+*Or if it fails:*
+3. **pending (retry)** (Exited with non-zero code, attempts incremented)
+   ↓
+4. **dead** (Exhausted all retries, moved to DLQ)
+   ↓
+5. **pending (manual retry)** (Engineer ran `dlq retry`, attempts reset to 0)
+
+---
+
+## Important Implementation Decisions
+
+For a full breakdown, see `DECISIONS.md`.
+
+- **Atomic Job Claiming:** Accomplished directly via SQL to prevent race conditions without needing a broker.
+- **SQLite BEGIN IMMEDIATE:** Locks the database securely upfront during a transaction to ensure atomic reads/updates across independent OS processes.
+- **State-Based Dead Letter Queue:** No separate tables were needed; DLQ simply leverages a specialized `dead` state string in the `jobs` table.
+- **Crash Recovery:** Workers record their OS PID when starting. Subsequent worker boots use `os.kill(pid, 0)` to verify liveness and clear out orphaned `processing` jobs.
+-- **Graceful Shutdown:** `SIGTERM` signals trip a global shutdown flag. The worker finishes its active subprocess without interruption before gracefully exiting.
+
+---
+
+---
+
+## Demo Recording
+
+Watch the complete project demonstration covering all required assignment scenarios:
+
+**Video:** https://drive.google.com/file/d/1UGO5SulRsYoLBkPxmLuk7ABJUWaE117-/view?usp=sharing
+
+> The demo includes:
+> - Project overview and architecture
+> - Basic job execution
+> - Retry with exponential backoff
+> - Dead Letter Queue (DLQ)
+> - Multiple concurrent workers
+> - SIGKILL crash recovery
+> - SQLite persistence
+> - Persistent configuration
+> - JSON output validation
