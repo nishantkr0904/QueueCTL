@@ -19,6 +19,7 @@ Those belong to later phases.
 import os
 import signal
 import subprocess
+import time
 
 from queuectl.models import (
     STATE_COMPLETED, STATE_DEAD, STATE_FAILED, STATE_PENDING, _now_utc,
@@ -229,19 +230,16 @@ def execute_job(connection, job):
 
 def run_worker(connection):
     """
-    Main worker loop: claim jobs and execute them until none remain
-    or a shutdown signal is received.
+    Main worker loop: claim jobs and execute them until
+    a shutdown signal is received.
 
-    The loop is intentionally simple:
+    The loop continuously polls for work:
       1. Check if shutdown was requested → if yes, exit.
-      2. Try to claim the oldest pending job via claim_job().
-      3. If no job was available → exit (queue is drained).
-      4. Execute the claimed job and update its state.
-      5. Go back to step 1.
-
-    This function does NOT implement continuous polling or sleeping.
-    When there are no more pending jobs, the worker exits cleanly.
-    Continuous polling may be added in a later phase if needed.
+      2. Perform crash recovery to clean up any orphaned jobs.
+      3. Try to claim the oldest pending job via claim_job().
+      4. If no job was available → sleep briefly and try again.
+      5. Execute the claimed job and update its state.
+      6. Go back to step 1.
 
     Args:
         connection: An open sqlite3.Connection.
@@ -254,6 +252,11 @@ def run_worker(connection):
         # execution, we stop here instead of claiming more work.
         if _shutdown_requested:
             break
+            
+        # --- Recover orphaned jobs ---
+        # If any other worker crashed, this will reset their
+        # processing jobs back to pending.
+        perform_crash_recovery(connection)
 
         # --- Try to claim the next pending job ---
         # claim_job() handles all concurrency safety internally.
@@ -262,8 +265,9 @@ def run_worker(connection):
         job = claim_job(connection, worker_id=pid)
 
         if job is None:
-            # No pending jobs — the queue is drained.
-            break
+            # No pending jobs — wait briefly before polling again.
+            time.sleep(0.5)
+            continue
 
         # --- Execute the job ---
         # This runs the shell command synchronously and updates
